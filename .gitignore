@@ -1,0 +1,41 @@
+## Visual Studio / .NET
+.vs/
+bin/
+obj/
+*.user
+*.suo
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.log
+TestResults/
+.vscode/
+.idea/
+
+## Secrets
+secrets.json
+appsettings.Local.json
+.env
+
+## Flutter (mobile/)
+mobile/build/
+mobile/.dart_tool/
+mobile/.flutter-plugins*
+mobile/android/.gradle/
+mobile/android/local.properties
+
+## Cấu hình cục bộ / bí mật
+appsettings.*.local.json
+*.pfx
+*.p12
+
+## Flutter / Android Studio (mobile/)
+mobile/.idea/
+mobile/*.iml
+mobile/android/app/debug/
+mobile/android/app/profile/
+mobile/android/app/release/
+mobile/android/key.properties
+mobile/**/GeneratedPluginRegistrant.*
+   Claude outputs/s

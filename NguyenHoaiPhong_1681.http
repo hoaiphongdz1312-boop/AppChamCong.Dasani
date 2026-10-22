@@ -1,0 +1,182 @@
+### =====================================================================
+### File test API chấm công. Mở bằng Visual Studio (Endpoints Explorer / .http editor)
+### rồi bấm "Send request" lần lượt từ trên xuống.
+###
+### LƯU Ý OTP: khi Otp:DevMode=true, mã OTP KHÔNG gửi thật mà được in ra cửa sổ console
+### của backend, dòng dạng:  [DEV OTP] Login user=1 kênh=Email: 123456
+### Sau mỗi request "send-otp", copy mã 6 số vào biến @adminCode / @empCode bên dưới.
+### Mã hết hạn sau 5 phút, gửi lại cần cách nhau >= 60 giây.
+### =====================================================================
+
+@host = http://localhost:5280
+
+# Tọa độ khớp với địa điểm HUTECH trong dữ liệu seed (Seed:LocationLat / LocationLng)
+@lat = 10.8021
+@lng = 106.7147
+
+@adminCode = 000000
+@empCode = 000000
+
+
+### ---------------------------------------------------------------------
+### A. ADMIN: đăng nhập 2 bước (mật khẩu -> OTP)
+### ---------------------------------------------------------------------
+
+# @name adminLogin
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "Admin@123"
+}
+
+###
+
+# @name adminSendOtp
+POST {{host}}/api/auth/login/send-otp
+Content-Type: application/json
+
+{
+  "otpSessionId": "{{adminLogin.response.body.$.otpSessionId}}",
+  "channel": "Email"
+}
+
+###
+# Sửa @adminCode ở đầu file thành mã trong console rồi mới gửi request này.
+
+# @name adminVerify
+POST {{host}}/api/auth/login/verify-otp
+Content-Type: application/json
+
+{
+  "otpSessionId": "{{adminLogin.response.body.$.otpSessionId}}",
+  "code": "{{adminCode}}",
+  "deviceId": "http-file-admin"
+}
+
+###
+
+@adminToken = {{adminVerify.response.body.$.accessToken}}
+
+### Thông tin tài khoản đang đăng nhập
+GET {{host}}/api/users/me
+Authorization: Bearer {{adminToken}}
+
+
+### ---------------------------------------------------------------------
+### B. ADMIN: lấy mã QR động của địa điểm (locationId = 1: HUTECH)
+### Token đổi mỗi 30 giây và chỉ dùng được 1 lần cho mỗi nhân viên,
+### nên chạy ngay request check-in ở phần C sau khi lấy.
+### ---------------------------------------------------------------------
+
+# @name qrCurrent
+GET {{host}}/api/qr/current?locationId=1
+Authorization: Bearer {{adminToken}}
+
+###
+
+@qrToken = {{qrCurrent.response.body.$.token}}
+
+
+### ---------------------------------------------------------------------
+### C. NHÂN VIÊN: đăng nhập rồi chấm công bằng QR
+### ---------------------------------------------------------------------
+
+# @name empLogin
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "nhanvien1",
+  "password": "Employee@123"
+}
+
+###
+
+# @name empSendOtp
+POST {{host}}/api/auth/login/send-otp
+Content-Type: application/json
+
+{
+  "otpSessionId": "{{empLogin.response.body.$.otpSessionId}}",
+  "channel": "Email"
+}
+
+###
+# Sửa @empCode ở đầu file thành mã trong console rồi mới gửi request này.
+
+# @name empVerify
+POST {{host}}/api/auth/login/verify-otp
+Content-Type: application/json
+
+{
+  "otpSessionId": "{{empLogin.response.body.$.otpSessionId}}",
+  "code": "{{empCode}}",
+  "deviceId": "http-file-emp"
+}
+
+###
+
+@empToken = {{empVerify.response.body.$.accessToken}}
+
+### Ca làm hôm nay và trạng thái chấm công
+GET {{host}}/api/attendance/today
+Authorization: Bearer {{empToken}}
+
+###
+
+### Check-in bằng QR (lấy lại QR mới ở phần B nếu đã quá 30-60 giây)
+POST {{host}}/api/attendance/check-in
+Authorization: Bearer {{empToken}}
+Content-Type: multipart/form-data; boundary=----ChamCongBoundary
+
+------ChamCongBoundary
+Content-Disposition: form-data; name="method"
+
+Qr
+------ChamCongBoundary
+Content-Disposition: form-data; name="qrToken"
+
+{{qrToken}}
+------ChamCongBoundary
+Content-Disposition: form-data; name="latitude"
+
+{{lat}}
+------ChamCongBoundary
+Content-Disposition: form-data; name="longitude"
+
+{{lng}}
+------ChamCongBoundary
+Content-Disposition: form-data; name="accuracy"
+
+10
+------ChamCongBoundary
+Content-Disposition: form-data; name="isMockLocation"
+
+false
+------ChamCongBoundary
+Content-Disposition: form-data; name="deviceId"
+
+http-file-emp
+------ChamCongBoundary--
+
+###
+
+### Lịch sử chấm công của tôi
+GET {{host}}/api/attendance/my
+Authorization: Bearer {{empToken}}
+
+
+### ---------------------------------------------------------------------
+### D. ADMIN: dashboard tổng quan
+### ---------------------------------------------------------------------
+
+GET {{host}}/api/dashboard/admin
+Authorization: Bearer {{adminToken}}
+
+###
+
+### Danh sách bản ghi chấm công nghi vấn (TrustScore < 60)
+GET {{host}}/api/attendance/suspicious
+Authorization: Bearer {{adminToken}}

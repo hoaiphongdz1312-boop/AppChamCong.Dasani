@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Mã QR chấm công</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2vmin;
+    padding: 2vmin;
+    text-align: center;
+  }
+  h1 { margin: 0; font-size: clamp(1.4rem, 4vmin, 2.6rem); font-weight: 600; }
+  .sub { color: var(--muted); font-size: clamp(0.9rem, 2.2vmin, 1.3rem); }
+  .qr-box {
+    background: #fff;
+    border-radius: 2vmin;
+    padding: 2.5vmin;
+    width: min(62vmin, 92vw);
+    aspect-ratio: 1 / 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1vmin 4vmin rgba(0, 0, 0, .45);
+    transition: opacity .25s;
+  }
+  .qr-box.stale { opacity: .25; }
+  .qr-box img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    image-rendering: pixelated;
+    display: block;
+  }
+  .qr-box .placeholder { color: #64748b; font-size: clamp(1rem, 2.5vmin, 1.6rem); }
+  .clock { font-size: clamp(1.8rem, 6vmin, 4rem); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .date { color: var(--muted); font-size: clamp(0.9rem, 2.2vmin, 1.3rem); }
+  .bar {
+    width: min(62vmin, 92vw);
+    height: 1.4vmin;
+    min-height: 8px;
+    background: var(--panel);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .bar > div { height: 100%; width: 100%; background: var(--accent); transform-origin: left center; }
+  .bar > div.low { background: var(--warn); }
+  .status { min-height: 1.6em; font-size: clamp(1rem, 2.4vmin, 1.5rem); color: var(--muted); }
+  .status.error { color: var(--danger); font-weight: 600; }
+  @media (max-height: 520px) and (orientation: landscape) {
+    body { flex-direction: row; flex-wrap: wrap; gap: 4vmin; }
+  }
+</style>
+</head>
+<body>
+  <h1 id="location">Chấm công</h1>
+  <div class="sub">Mở ứng dụng chấm công và quét mã bên dưới</div>
+
+  <div class="qr-box" id="qrBox"><span class="placeholder" id="placeholder">Đang tải mã QR...</span></div>
+
+  <div class="bar" aria-hidden="true"><div id="barFill"></div></div>
+  <div class="status" id="status" role="status"></div>
+
+  <div>
+    <div class="clock" id="clock">--:--:--</div>
+    <div class="date" id="date"></div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var params = new URLSearchParams(location.search);
+  var locationId = params.get('locationId');
+  var key = params.get('key');
+
+  var elLocation = document.getElementById('location');
+  var elBox = document.getElementById('qrBox');
+  var elPlaceholder = document.getElementById('placeholder');
+  var elBar = document.getElementById('barFill');
+  var elStatus = document.getElementById('status');
+  var elClock = document.getElementById('clock');
+  var elDate = document.getElementById('date');
+
+  var img = null;
+  var expiresAtMono = 0;   // thời điểm hết hạn theo đồng hồ đơn điệu của trình duyệt (ms)
+  var windowMs = 30000;
+  var fetching = false;
+  var stopped = false;
+  var offline = false;
+  var retryAt = 0;
+
+  function setStatus(text, isError) {
+    elStatus.textContent = text || '';
+    elStatus.className = 'status' + (isError ? ' error' : '');
+  }
+
+  function showFatal(text) {
+    stopped = true;
+    if (img) { img.remove(); img = null; }
+    elPlaceholder.style.display = '';
+    elPlaceholder.textContent = text;
+    elBox.classList.remove('stale');
+    elBar.style.transform = 'scaleX(0)';
+    setStatus(text, true);
+  }
+
+  if (!locationId || !key || !/^\d+$/.test(locationId)) {
+    showFatal('Đường dẫn kiosk không hợp lệ');
+    return;
+  }
+
+  function render(data) {
+    if (!img) {
+      img = document.createElement('img');
+      img.alt = 'Mã QR chấm công';
+      elBox.appendChild(img);
+    }
+    img.src = 'data:image/png;base64,' + data.qrPngBase64;
+    elPlaceholder.style.display = 'none';
+    elLocation.textContent = data.locationName;
+    document.title = data.locationName + ' - Mã QR chấm công';
+    windowMs = (data.windowSeconds || 30) * 1000;
+    // Dùng secondsLeft từ server để không phụ thuộc đồng hồ máy kiosk.
+    expiresAtMono = performance.now() + data.secondsLeft * 1000;
+    elBox.classList.remove('stale');
+    offline = false;
+    setStatus('');
+  }
+
+  function load() {
+    if (fetching || stopped) return;
+    fetching = true;
+    var url = 'api/qr/kiosk?locationId=' + encodeURIComponent(locationId) + '&key=' + encodeURIComponent(key);
+    fetch(url, { cache: 'no-store' })
+      .then(function (res) {
+        if (res.status === 401) { showFatal('Đường dẫn kiosk không hợp lệ'); return null; }
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (data) { if (data) render(data); })
+      .catch(function () {
+        offline = true;
+        retryAt = performance.now() + 3000;
+        setStatus('Mất kết nối, đang thử lại', true);
+        if (performance.now() >= expiresAtMono) elBox.classList.add('stale');
+      })
+      .then(function () { fetching = false; });
+  }
+
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+  function tick() {
+    var now = new Date();
+    elClock.textContent = pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+    elDate.textContent = now.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+
+    if (stopped) return;
+    var t = performance.now();
+    var left = Math.max(0, expiresAtMono - t);
+    var ratio = windowMs > 0 ? Math.min(1, left / windowMs) : 0;
+    elBar.style.transform = 'scaleX(' + ratio + ')';
+    elBar.className = left <= 5000 ? 'low' : '';
+
+    if (offline) {
+      if (t >= retryAt) { retryAt = t + 3000; load(); }
+      if (t >= expiresAtMono) elBox.classList.add('stale');
+    } else if (left <= 2000) {
+      load();
+    }
+  }
+
+  load();
+  setInterval(tick, 200);
+  tick();
+})();
+</script>
+</body>
+</html>
